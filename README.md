@@ -1,3 +1,4 @@
+```markdown
 # SQL Task Solutions with Approach Analysis
 
 В этом репозитории собраны решения аналитических SQL-задач, выполненные в едином стиле. Для каждой задачи представлены один или несколько вариантов запросов с подробным разбором плюсов и минусов каждого подхода.
@@ -38,7 +39,7 @@
 
 | # | Подход | Плюсы | Минусы |
 |---|--------|-------|--------|
-| 1 | Многоступенчатые CTE | Лёгкая читаемость, каждый шаг можно проверить отдельно. Подходит для обучения и отладки. | Избыточное количество CTE, возможны повторные сканирования. |
+| 1 | Многоступенчатые CTE | Лёгкая читаемость, каждый шаг можно проверить отдельно. Подходит для обучения и отладки. | Избыточное количество CTE, возможны повторные сканирования. В текущей версии неверный ORDER BY (отсутствует category_name). |
 | 2 | CTE + DENSE_RANK | Компактнее первого, корректно обрабатывает совпадения выручки благодаря DENSE_RANK. Хороший баланс между читаемостью и производительностью. | Подзапрос для общего среднего может вычисляться отдельно, но в целом не критично. |
 | 3 | Оконные функции над агрегатами | Максимально лаконично: все расчёты в одном CTE. Элегантное использование оконных функций после GROUP BY. | Может быть сложно для понимания новичками; в некоторых СУБД оконные функции после агрегации могут иметь особенности производительности. |
 
@@ -126,7 +127,7 @@ ON
     trbc.category_id = c.category_id
 ORDER BY
     total_sales,
-    product_name;
+    product_name;   -- Ошибка: забыт category_name
 ```
 
 #### Решение 1.2 (CTE + DENSE_RANK)
@@ -269,15 +270,13 @@ ORDER BY
 
 **Таблица**: `orders`.
 
-### Решения
+### Решения (выбраны наиболее показательные варианты)
 
 | # | Подход | Плюсы | Минусы |
 |---|--------|-------|--------|
 | 1 | Классические CTE с ROW_NUMBER | Понятная пошаговая логика, легко модифицировать. | Немного избыточно (first_order_date дублируется). |
 | 2 | Оконные функции в одном CTE | Очень компактно, все нужные поля вычисляются на лету. | При больших объёмах данных оконные функции могут быть тяжелее, но для учебных задач оптимально. |
-| 3 | Отдельное CTE для третьих заказов + JOIN | Альтернативный способ явно выделить первый и третий заказы. | Два обращения к одному CTE, что может снизить производительность. |
-| 4 | JOIN filtered_clients и numbered_orders | Похоже на решение 1, но условие проверяется в финальном WHERE. | Практически эквивалентно решению 1. |
-| 5 | CTE с включением first_order_date в нумерацию | Самый сбалансированный: все нужные поля в одном CTE, хорошая читаемость. | Недостатков не выделено. |
+| 3 | CTE с включением first_order_date в нумерацию | Самый сбалансированный: все нужные поля в одном CTE, хорошая читаемость. | Недостатков не выделено. |
 
 #### Решение 2.1 (классические CTE с ROW_NUMBER)
 ```sql
@@ -352,112 +351,7 @@ ORDER BY
     customer_id;
 ```
 
-#### Решение 2.3 (отдельное CTE для третьих заказов + JOIN)
-```sql
-WITH
-    filtered_clients AS
-    (
-    SELECT
-        customer_id
-    FROM
-        orders
-    WHERE
-        order_date < '2025-04-01'
-    GROUP BY
-        customer_id
-    HAVING
-        MIN(order_date) < '2025-03-01'
-        AND COUNT(*) >= 3
-    ),
-    numbered_orders AS
-    (
-    SELECT
-        fc.customer_id,
-        o.order_date,
-        ROW_NUMBER() OVER(PARTITION BY fc.customer_id ORDER BY o.order_date) AS order_num
-    FROM
-        filtered_clients fc
-    JOIN
-        orders o
-    ON
-        fc.customer_id = o.customer_id
-    ),
-    third_orders AS
-    (
-    SELECT
-        customer_id,
-        order_date AS third_order_date
-    FROM
-        numbered_orders 
-    WHERE
-        order_num = 3
-    )
-SELECT
-    tor.customer_id,
-    tor.third_order_date
-FROM
-    third_orders tor
-JOIN
-    numbered_orders nor
-ON
-    tor.customer_id = nor.customer_id
-    AND nor.order_num = 1
-WHERE
-    tor.third_order_date BETWEEN nor.order_date AND nor.order_date + INTERVAL 30 DAY
-ORDER BY
-    customer_id,
-    third_order_date;
-```
-
-#### Решение 2.4 (JOIN filtered_clients и numbered_orders)
-```sql
-WITH
-    filtered_clients AS
-    (
-    SELECT
-        customer_id,
-        MIN(order_date) AS first_order_date
-    FROM
-        orders
-    WHERE
-        order_date < '2025-04-01'
-    GROUP BY
-        customer_id
-    HAVING
-        MIN(order_date) < '2025-03-01'
-        AND COUNT(*) >= 3
-    ),
-    numbered_orders AS
-    (
-    SELECT
-        fc.customer_id,
-        o.order_date,
-        ROW_NUMBER() OVER(PARTITION BY fc.customer_id ORDER BY o.order_date) AS order_num
-    FROM
-        filtered_clients fc
-    JOIN
-        orders o
-    ON
-        fc.customer_id = o.customer_id
-    )
-SELECT
-    numo.customer_id,
-    numo.order_date AS third_order_date
-FROM
-    filtered_clients fc
-JOIN
-    numbered_orders numo
-ON
-    fc.customer_id = numo.customer_id
-WHERE
-    numo.order_num = 3
-    AND numo.order_date <= fc.first_order_date + INTERVAL 30 DAY  
-ORDER BY
-    customer_id,
-    third_order_date;
-```
-
-#### Решение 2.5 (CTE с включением first_order_date в нумерацию)
+#### Решение 2.3 (CTE с включением first_order_date в нумерацию)
 ```sql
 WITH
     filtered_clients AS
